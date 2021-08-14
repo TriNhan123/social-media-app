@@ -4,60 +4,85 @@ const { UserInputError } = require('apollo-server');
 
 const { SECRET_KEY} = require('../../config');
 const User = require('../../models/User');
-const { validateRegisterInput } = require('../../util/validators');
+const { validateRegisterInput, validateLoginInput } = require('../../util/validators');
+
+const generateToken = (user) => jwt.sign({
+    id: user.id,
+    email: user.email,
+    username: user.username
+}, SECRET_KEY, { expiresIn: '1h'});
 
 module.exports = {
     Mutation: {
         async register(
-            _, 
-            {
-            registerInput: {username, email, password, comfirmPassword }
-            }
-            ){
-            // Validate user data 
+        _,
+        {
+            registerInput: { username, email, password, confirmPassword }
+        }
+        ) {
+        // Validate user data
             const { valid, errors } = validateRegisterInput(
-                username, 
-                email, 
-                password, 
-                comfirmPassword
+                username,
+                email,
+                password,
+                confirmPassword
             );
-            if(!valid){
+            if (!valid) {
                 throw new UserInputError('Errors', { errors });
             }
-
-            //Make sure user hasn't already exist
-            const user = User.findOne({ username });
-            if(user){
+            // TODO: Make sure user doesnt already exist
+            const user = await User.findOne({ username });
+            if (user) {
                 throw new UserInputError('Username is taken', {
-                    errors: {
-                        username: 'This username is taken'
-                    }
-                })
+                errors: {
+                    username: 'This username is taken'
+                }
+                });
             }
-                
-            // hash password and create an auth token 
-            password = await bcrypt.hash(password, 12)
+            // hash password and create an auth token
+            password = await bcrypt.hash(password, 12);
+
             const newUser = new User({
                 email,
-                username, 
-                password, 
+                username,
+                password,
                 createdAt: new Date().toISOString()
             });
-            
-            //save new registered user to db 
+
             const res = await newUser.save();
 
-            const token = jwt.sign({
-                id: res.id,
-                email: res.email,
-                username: res.username
-            }, SECRET_KEY, { expiresIn: '1h'});
+            const token = generateToken(res);
 
             return {
                 ...res._doc,
                 id: res._id,
+                token
+            };
+        },
+        async login (_, {username, password})
+        {
+            const{ valid, errors } = validateLoginInput(username, password);
+            const user = await User.findOne({username});
+
+            if(!valid){
+                throw new UserInputError('Errors', { errors });
+            }
+            
+            if(!user){
+                errors.general = 'User not found';
+                throw new UserInputError('User not found', { errors });
+            }
+            const match = await bcrypt.compare(password, user.password);
+            if(!match){
+                errors.general = 'Wrong credentials';
+                throw new UserInputError('Wrong credentials', { errors });
+            }
+            const token = generateToken(user)
+            return {
+                ...user._doc,
+                id: user._id,
                 token 
             };
-        }
+        },
     }
 };
